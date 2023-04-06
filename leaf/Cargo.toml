@@ -95,10 +95,10 @@ outbound-trojan = ["sha2", "hex"]
 outbound-tls = []
 outbound-ws = ["tungstenite", "tokio-tungstenite", "url", "http"]
 outbound-failover = ["lru_time_cache"]
-outbound-static= []
+outbound-static = []
 outbound-tryall = []
 outbound-chain = []
-outbound-amux= ["tokio-util"]
+outbound-amux = ["tokio-util"]
 outbound-quic = ["quinn", "rustls", "webpki-roots"]
 outbound-select = []
 outbound-vmess = ["lz_fnv", "cfb-mode", "hmac", "aes", "sha3", "digest", "uuid", "md-5", "tokio-util"]
@@ -230,6 +230,7 @@ warp = { version = "0.3", default-features = false, optional = true }
 notify = { version = "5.0.0-pre.13", optional = true }
 
 # Process
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))'.dependencies]
 netstat2 = "0.9.1"
 sysinfo = "0.28.4"
 
