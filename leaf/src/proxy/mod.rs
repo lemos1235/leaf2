@@ -1,6 +1,8 @@
 use std::ffi::CString;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,20 +11,38 @@ use futures::future::select_ok;
 use futures::stream::Stream;
 use futures::TryFutureExt;
 use log::*;
-use socket2::SockRef;
+use socket2::{Domain, Socket, SockRef, Type};
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpSocket, TcpStream, UdpSocket};
 use tokio::time::timeout;
 
-#[cfg(unix)]
-use std::os::unix::io::AsRawFd;
-#[cfg(windows)]
-use std::os::windows::io::AsRawSocket;
 #[cfg(target_os = "android")]
 use {
     std::os::unix::io::RawFd, tokio::io::AsyncReadExt, tokio::io::AsyncWriteExt,
     tokio::net::UnixStream,
+};
+#[cfg(target_os = "windows")]
+use {
+    std::os::windows::io::AsRawSocket,
+    windows::{
+        core::{HRESULT, HSTRING},
+        Win32::{
+            Networking::WinSock::{
+                IP_MULTICAST_IF, IP_UNICAST_IF, IPPROTO, IPPROTO_IP, IPPROTO_IPV6, IPV6_MULTICAST_IF,
+                IPV6_UNICAST_IF, setsockopt, SOCKET,
+            },
+            NetworkManagement::{
+                IpHelper::{ConvertInterfaceAliasToLuid, ConvertInterfaceLuidToIndex},
+                Ndis::NET_LUID_LH,
+            },
+        },
+    },
+};
+pub use datagram::{
+    SimpleInboundDatagram, SimpleInboundDatagramRecvHalf, SimpleInboundDatagramSendHalf,
+    SimpleOutboundDatagram, SimpleOutboundDatagramRecvHalf, SimpleOutboundDatagramSendHalf,
+    StdOutboundDatagram,
 };
 
 use crate::{
@@ -48,6 +68,8 @@ pub mod drop;
 pub mod failover;
 #[cfg(feature = "inbound-http")]
 pub mod http;
+#[cfg(feature = "outbound-obfs")]
+pub mod obfs;
 #[cfg(any(feature = "inbound-quic", feature = "outbound-quic"))]
 pub mod quic;
 #[cfg(feature = "outbound-redirect")]
@@ -56,8 +78,6 @@ pub mod redirect;
 pub mod select;
 #[cfg(any(feature = "inbound-shadowsocks", feature = "outbound-shadowsocks"))]
 pub mod shadowsocks;
-#[cfg(feature = "outbound-obfs")]
-pub mod obfs;
 #[cfg(any(feature = "inbound-socks", feature = "outbound-socks"))]
 pub mod socks;
 #[cfg(feature = "outbound-static")]
@@ -74,7 +94,8 @@ pub mod tryall;
         target_os = "ios",
         target_os = "android",
         target_os = "macos",
-        target_os = "linux"
+        target_os = "linux",
+        target_os = "windows"
     )
 ))]
 pub mod tun;
@@ -82,12 +103,6 @@ pub mod tun;
 pub mod vmess;
 #[cfg(any(feature = "inbound-ws", feature = "outbound-ws"))]
 pub mod ws;
-
-pub use datagram::{
-    SimpleInboundDatagram, SimpleInboundDatagramRecvHalf, SimpleInboundDatagramSendHalf,
-    SimpleOutboundDatagram, SimpleOutboundDatagramRecvHalf, SimpleOutboundDatagramSendHalf,
-    StdOutboundDatagram,
-};
 
 #[derive(Error, Debug)]
 pub enum ProxyError {
@@ -167,8 +182,13 @@ trait BindSocket: AsRawFd {
     fn bind(&self, bind_addr: &SocketAddr) -> io::Result<()>;
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
 trait BindSocket {
+    fn bind(&self, bind_addr: &SocketAddr) -> io::Result<()>;
+}
+
+#[cfg(target_os = "windows")]
+trait BindSocket: AsRawSocket {
     fn bind(&self, bind_addr: &SocketAddr) -> io::Result<()>;
 }
 
@@ -203,7 +223,7 @@ impl TcpListener {
     }
 }
 
-async fn bind_socket<T: BindSocket>(socket: &T, indicator: &SocketAddr) -> io::Result<()> {
+async fn bind_socket<T: BindSocket>(t: Type, socket: &T, indicator: &SocketAddr) -> io::Result<()> {
     match indicator.ip() {
         IpAddr::V4(v4) if v4.is_loopback() => {
             socket.bind(&SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0).into())?;
@@ -270,7 +290,64 @@ async fn bind_socket<T: BindSocket>(socket: &T, indicator: &SocketAddr) -> io::R
                     trace!("socket bind {}", iface);
                     return Ok(());
                 }
-                #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+                #[cfg(target_os = "windows")]
+                {
+                    unsafe {
+                        let mut if_index = 0;
+                        let mut if_luid = NET_LUID_LH::default();
+                        let if_alias = HSTRING::from(iface.as_str());
+                        let _ = ConvertInterfaceAliasToLuid(&if_alias, &mut if_luid);
+                        let _ = ConvertInterfaceLuidToIndex(&if_luid, &mut if_index);
+                        if if_index == 0 {
+                            last_err = Some(io::Error::last_os_error());
+                            continue;
+                        }
+
+                        if t == Type::DGRAM {
+                            let ret = match indicator {
+                                SocketAddr::V4(..) => setsockopt(
+                                    SOCKET(socket.as_raw_socket() as usize),
+                                    IPPROTO_IP.0,
+                                    IP_MULTICAST_IF,
+                                    Some(&if_index.to_be_bytes()),
+                                ),
+                                SocketAddr::V6(..) => setsockopt(
+                                    SOCKET(socket.as_raw_socket() as usize),
+                                    IPPROTO_IPV6.0,
+                                    IPV6_MULTICAST_IF,
+                                    Some(&if_index.to_be_bytes()),
+                                ),
+                            };
+
+                            if ret == -1 {
+                                last_err = Some(io::Error::last_os_error());
+                                continue;
+                            }
+                        }
+
+                        let ret = match indicator {
+                            SocketAddr::V4(..) => setsockopt(
+                                SOCKET(socket.as_raw_socket() as usize),
+                                IPPROTO_IP.0,
+                                IP_UNICAST_IF,
+                                Some(&if_index.to_be_bytes()),
+                            ),
+                            SocketAddr::V6(..) => setsockopt(
+                                SOCKET(socket.as_raw_socket() as usize),
+                                IPPROTO_IPV6.0,
+                                IPV6_UNICAST_IF,
+                                Some(&if_index.to_be_bytes()),
+                            ),
+                        };
+                        if ret == -1 {
+                            last_err = Some(io::Error::last_os_error());
+                            continue;
+                        }
+                    }
+                    trace!("socket bind {}", iface);
+                    return Ok(());
+                }
+                #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
                 {
                     return Err(io::Error::new(
                         io::ErrorKind::Other,
@@ -302,7 +379,6 @@ async fn bind_socket<T: BindSocket>(socket: &T, indicator: &SocketAddr) -> io::R
 
 // New UDP socket.
 pub async fn new_udp_socket(indicator: &SocketAddr) -> io::Result<UdpSocket> {
-    use socket2::{Domain, Socket, Type};
     let socket = if *option::ENABLE_IPV6 {
         // Dual-stack socket.
         // FIXME Windows IPV6_V6ONLY?
@@ -318,9 +394,9 @@ pub async fn new_udp_socket(indicator: &SocketAddr) -> io::Result<UdpSocket> {
     // If the proxy request is coming from an inbound listens on the loopback,
     // the indicator could be a loopback address, we must ignore it.
     if indicator.ip().is_loopback() || *option::ENABLE_IPV6 {
-        bind_socket(&socket, &*option::UNSPECIFIED_BIND_ADDR).await?;
+        bind_socket(Type::DGRAM, &socket, &*option::UNSPECIFIED_BIND_ADDR).await?;
     } else {
-        bind_socket(&socket, indicator).await?;
+        bind_socket(Type::DGRAM, &socket, indicator).await?;
     }
 
     #[cfg(target_os = "android")]
@@ -338,6 +414,7 @@ fn apply_socket_opts<S: AsRawFd>(socket: &S) -> io::Result<()> {
     let sock_ref = SockRef::from(socket);
     apply_socket_opts_internal(sock_ref)
 }
+
 #[cfg(windows)]
 fn apply_socket_opts<S: AsRawSocket>(socket: &S) -> io::Result<()> {
     let sock_ref = SockRef::from(socket);
@@ -364,7 +441,7 @@ async fn tcp_dial_task(dial_addr: SocketAddr) -> io::Result<DialResult> {
         SocketAddr::V6(..) => TcpSocket::new_v6()?,
     };
 
-    bind_socket(&socket, &dial_addr).await?;
+    bind_socket(Type::STREAM, &socket, &dial_addr).await?;
 
     #[cfg(target_os = "android")]
     protect_socket(socket.as_raw_fd()).await?;
