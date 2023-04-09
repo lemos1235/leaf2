@@ -35,33 +35,47 @@ pub fn get_net_info() -> NetInfo {
         None
     };
 
-    let all_interfaces = pnet_datalink::interfaces();
-    let ipv4_addr = if let Some(ifa) = all_interfaces
-        .iter()
-        .find(|ifa| ifa.name == iface && !ifa.ips.is_empty())
+    let ipv4_addr: Option<String>;
+    let ipv6_addr: Option<String>;
+    #[cfg(not(target_os = "windows"))]
     {
-        ifa.ips
-            .iter()
-            .find(|ipn| ipn.is_ipv4())
-            .map(|ipn| ipn.ip().to_string())
-    } else {
-        None
-    };
-    let ipv6_addr = if *option::ENABLE_IPV6 {
-        if let Some(ifa) = all_interfaces
+        let all_interfaces = pnet_datalink::interfaces();
+        ipv4_addr = if let Some(ifa) = all_interfaces
             .iter()
             .find(|ifa| ifa.name == iface && !ifa.ips.is_empty())
         {
             ifa.ips
                 .iter()
-                .find(|ipn| ipn.is_ipv6())
+                .find(|ipn| ipn.is_ipv4())
                 .map(|ipn| ipn.ip().to_string())
         } else {
             None
+        };
+        ipv6_addr = if *option::ENABLE_IPV6 {
+            if let Some(ifa) = all_interfaces
+                .iter()
+                .find(|ifa| ifa.name == iface && !ifa.ips.is_empty())
+            {
+                ifa.ips
+                    .iter()
+                    .find(|ipn| ipn.is_ipv6())
+                    .map(|ipn| ipn.ip().to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+    }
+    #[cfg(target_os = "windows")]
+    {
+        ipv4_addr = common::cmd::get_ipv4_address(iface.as_str());
+        ipv6_addr = if *option::ENABLE_IPV6 {
+            common::cmd::get_ipv6_address(iface.as_str())
+        } else {
+            None
         }
-    } else {
-        None
-    };
+    }
     let ipv4_forwarding = common::cmd::get_ipv4_forwarding().unwrap();
     let ipv6_forwarding = if *option::ENABLE_IPV6 {
         common::cmd::get_ipv6_forwarding().unwrap()
