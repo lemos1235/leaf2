@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::os::windows::process::CommandExt;
 use std::process::Command;
 
 use anyhow::Result;
@@ -27,7 +28,10 @@ pub fn get_default_ipv6_address() -> Result<String> {
 }
 
 pub fn get_ipv4_address(interface: &str) -> Option<String> {
-    let out = Command::new("netsh")
+    let out = Command::new("cmd")
+        .creation_flags(0x08000000)
+        .arg("/c")
+        .arg("netsh")
         .arg("interface")
         .arg("ipv4")
         .arg("show")
@@ -40,7 +44,10 @@ pub fn get_ipv4_address(interface: &str) -> Option<String> {
 }
 
 pub fn get_ipv6_address(interface: &str) -> Option<String> {
-    let out = Command::new("netsh")
+    let out = Command::new("cmd")
+        .creation_flags(0x08000000)
+        .arg("/c")
+        .arg("netsh")
         .arg("interface")
         .arg("ipv6")
         .arg("show")
@@ -75,7 +82,10 @@ fn find_ip_address(interface: &str, output: String) -> Option<String> {
 
 pub fn get_default_interface() -> Result<String> {
     let if_idx = get_default_ipv4_interface_index().unwrap();
-    let out = Command::new("netsh")
+    let out = Command::new("cmd")
+        .creation_flags(0x08000000)
+        .arg("/c")
+        .arg("netsh")
         .arg("interface")
         .arg("ipv4")
         .arg("show")
@@ -103,7 +113,10 @@ pub fn add_interface_ipv4_address(
     gw: Ipv4Addr,
     mask: Ipv4Addr,
 ) -> Result<()> {
-    let out = Command::new("netsh")
+    let out = Command::new("cmd")
+        .creation_flags(0x08000000)
+        .arg("/c")
+        .arg("netsh")
         .arg("interface")
         .arg("ipv4")
         .arg("set")
@@ -121,7 +134,10 @@ pub fn add_interface_ipv4_address(
 }
 
 pub fn add_interface_ipv6_address(name: &str, addr: Ipv6Addr, prefixlen: i32) -> Result<()> {
-    let out = Command::new("netsh")
+    let out = Command::new("cmd")
+        .creation_flags(0x08000000)
+        .arg("/c")
+        .arg("netsh")
         .arg("interface")
         .arg("ipv6")
         .arg("set")
@@ -137,7 +153,10 @@ pub fn add_interface_ipv6_address(name: &str, addr: Ipv6Addr, prefixlen: i32) ->
 pub fn add_default_ipv4_route(gateway: Ipv4Addr, interface: String, is_tun: bool) -> Result<()> {
     if is_tun {
         let tun_if_idx = get_interface_index(&*option::DEFAULT_TUN_NAME).unwrap();
-        Command::new("netsh")
+        Command::new("cmd")
+        .creation_flags(0x08000000)
+        .arg("/c")
+            .arg("netsh")
             .arg("interface")
             .arg("ipv4")
             .arg("add")
@@ -151,7 +170,10 @@ pub fn add_default_ipv4_route(gateway: Ipv4Addr, interface: String, is_tun: bool
             .expect("failed to execute command");
     } else {
         let if_idx = get_interface_index(interface.as_str()).unwrap();
-        Command::new("netsh")
+        Command::new("cmd")
+        .creation_flags(0x08000000)
+        .arg("/c")
+            .arg("netsh")
             .arg("interface")
             .arg("ipv4")
             .arg("add")
@@ -168,7 +190,10 @@ pub fn add_default_ipv4_route(gateway: Ipv4Addr, interface: String, is_tun: bool
 pub fn add_default_ipv6_route(gateway: Ipv6Addr, interface: String, is_tun: bool) -> Result<()> {
     if is_tun {
         let tun_if_idx = get_interface_index(&*option::DEFAULT_TUN_NAME).unwrap();
-        Command::new("netsh")
+        Command::new("cmd")
+        .creation_flags(0x08000000)
+        .arg("/c")
+            .arg("netsh")
             .arg("interface")
             .arg("ipv6")
             .arg("add")
@@ -182,7 +207,10 @@ pub fn add_default_ipv6_route(gateway: Ipv6Addr, interface: String, is_tun: bool
             .expect("failed to execute command");
     } else {
         let if_idx = get_interface_index(interface.as_str()).unwrap();
-        Command::new("netsh")
+        Command::new("cmd")
+        .creation_flags(0x08000000)
+        .arg("/c")
+            .arg("netsh")
             .arg("interface")
             .arg("ipv6")
             .arg("add")
@@ -200,7 +228,10 @@ pub fn add_default_ipv6_route(gateway: Ipv6Addr, interface: String, is_tun: bool
 pub fn delete_default_ipv6_route(ifscope: Option<String>) -> Result<()> {
     if let Some(scope) = ifscope {
         let if_idx = get_interface_index(scope.as_str()).unwrap();
-        let out = Command::new("netsh")
+        let out = Command::new("cmd")
+        .creation_flags(0x08000000)
+        .arg("/c")
+            .arg("netsh")
             .arg("interface")
             .arg("ipv4")
             .arg("delete")
@@ -212,7 +243,10 @@ pub fn delete_default_ipv6_route(ifscope: Option<String>) -> Result<()> {
             .output()
             .expect("failed to execute command");
     } else {
-        let out = Command::new("route")
+        let out = Command::new("cmd")
+            .creation_flags(0x08000000)
+            .arg("/c")
+            .arg("route")
             .arg("-6")
             .arg("delete")
             .arg("::/0")
@@ -225,7 +259,10 @@ pub fn delete_default_ipv6_route(ifscope: Option<String>) -> Result<()> {
 pub fn delete_default_ipv4_route(ifscope: Option<String>) -> Result<()> {
     if let Some(scope) = ifscope {
         let if_idx = get_interface_index(scope.as_str()).unwrap();
-        let out = Command::new("netsh")
+        let out = Command::new("cmd")
+        .creation_flags(0x08000000)
+        .arg("/c")
+            .arg("netsh")
             .arg("interface")
             .arg("ipv4")
             .arg("delete")
@@ -237,7 +274,10 @@ pub fn delete_default_ipv4_route(ifscope: Option<String>) -> Result<()> {
             .output()
             .expect("failed to execute command");
     } else {
-        let out = Command::new("route")
+        let out = Command::new("cmd")
+            .creation_flags(0x08000000)
+            .arg("/c")
+            .arg("route")
             .arg("-4")
             .arg("delete")
             .arg("0.0.0.0/0")
@@ -325,7 +365,10 @@ pub fn get_interface_indices() -> Result<Vec<String>> {
 }
 
 pub fn get_interface_entries() -> Result<Vec<Vec<String>>> {
-    let out = Command::new("netsh")
+    let out = Command::new("cmd")
+        .creation_flags(0x08000000)
+        .arg("/c")
+        .arg("netsh")
         .arg("interface")
         .arg("ip")
         .arg("show")
@@ -351,7 +394,10 @@ pub fn get_interface_entries() -> Result<Vec<Vec<String>>> {
 }
 
 pub fn get_ipv4_route_entries() -> Result<Vec<Vec<String>>> {
-    let out = Command::new("netsh")
+    let out = Command::new("cmd")
+        .creation_flags(0x08000000)
+        .arg("/c")
+        .arg("netsh")
         .arg("interface")
         .arg("ipv4")
         .arg("show")
@@ -364,7 +410,10 @@ pub fn get_ipv4_route_entries() -> Result<Vec<Vec<String>>> {
 }
 
 pub fn get_ipv6_route_entries() -> Result<Vec<Vec<String>>> {
-    let out = Command::new("netsh")
+    let out = Command::new("cmd")
+        .creation_flags(0x08000000)
+        .arg("/c")
+        .arg("netsh")
         .arg("interface")
         .arg("ipv6")
         .arg("show")
